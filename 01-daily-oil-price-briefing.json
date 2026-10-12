@@ -1,0 +1,425 @@
+{
+  "name": "01 - Daily Oil and Gas Price Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily Oil and Gas Price Briefing\n\n**Schedule:** every weekday at 07:00 (cron `0 7 * * 1-5`). Change the workflow timezone in Settings if your team is not on the server timezone.\n\n**Credentials needed (create them with these names)**\n1. `EIA API Key` - type **Query Auth** (`httpQueryAuth`). Set *Name* = `api_key` and *Value* = your EIA key (free: https://www.eia.gov/opendata/register.php).\n2. `Google Sheets account` - Google Sheets OAuth2.\n3. `Slack account` - Slack API with the `chat:write` scope.\n\n**Setup**\n1. Create a spreadsheet and add a tab named `PriceHistory` with this header row:\n   `date | brent_usd | wti_usd | natgas_usd | brent_change_pct | wti_change_pct | natgas_change_pct`\n2. Replace `REPLACE_WITH_GOOGLE_SHEET_ID` in both Google Sheets nodes.\n3. Pick your channel in both Slack nodes (placeholder `C0123456789` / `#oil-gas-alerts`).\n4. Threshold is 3% - edit `THRESHOLD_PCT` inside the **Compute % Change** node.\n\n**Series used:** Brent `RBRTE`, WTI `RWTC`, Henry Hub gas `RNGWHHD` (EIA v2 API).\n\n_Run the workflow once manually with a sheet that already has a row for the previous day to test the % change logic._",
+        "height": 560,
+        "width": 500,
+        "color": 4
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000001",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1780, -280]
+    },
+    {
+      "parameters": {
+        "content": "### Alert rule\nAny of Brent, WTI or Henry Hub gas moving more than **3%** against the previous row in `PriceHistory` triggers the urgent Slack path. The daily briefing is always sent.",
+        "height": 220,
+        "width": 320,
+        "color": 3
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000002",
+      "name": "Alert Rule Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [420, 640]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000003",
+      "name": "Weekdays at 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1180, 260]
+    },
+    {
+      "parameters": {
+        "url": "https://api.eia.gov/v2/petroleum/pri/spt/data/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "frequency",
+              "value": "daily"
+            },
+            {
+              "name": "data[0]",
+              "value": "value"
+            },
+            {
+              "name": "facets[series][]",
+              "value": "RBRTE"
+            },
+            {
+              "name": "facets[series][]",
+              "value": "RWTC"
+            },
+            {
+              "name": "sort[0][column]",
+              "value": "period"
+            },
+            {
+              "name": "sort[0][direction]",
+              "value": "desc"
+            },
+            {
+              "name": "length",
+              "value": "3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000004",
+      "name": "EIA Crude Oil (Brent + WTI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-900, 260],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "REPLACE_WITH_EIA_QUERY_AUTH_CREDENTIAL_ID",
+          "name": "EIA API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.eia.gov/v2/natural-gas/pri/fut/data/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "frequency",
+              "value": "daily"
+            },
+            {
+              "name": "data[0]",
+              "value": "value"
+            },
+            {
+              "name": "facets[series][]",
+              "value": "RNGWHHD"
+            },
+            {
+              "name": "sort[0][column]",
+              "value": "period"
+            },
+            {
+              "name": "sort[0][direction]",
+              "value": "desc"
+            },
+            {
+              "name": "length",
+              "value": "3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000005",
+      "name": "EIA Natural Gas (Henry Hub)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-640, 260],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "REPLACE_WITH_EIA_QUERY_AUTH_CREDENTIAL_ID",
+          "name": "EIA API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The two EIA calls run in sequence, so the crude oil reply is read from its node by name.\nconst oilPayload = $('EIA Crude Oil (Brent + WTI)').first().json;\nconst gasPayload = $json;\n\nconst dataRows = (payload) => {\n  if (!payload || !payload.response || !Array.isArray(payload.response.data)) return [];\n  return payload.response.data;\n};\n\nconst pickSeries = (rows, seriesCode) => {\n  if (rows.length === 0) return null;\n  const match = rows.find((row) => row.series === seriesCode) || rows[0];\n  const value = Number(match.value);\n  return Number.isFinite(value) ? value : null;\n};\n\nconst now = new Date();\nconst pad = (n) => String(n).padStart(2, '0');\nconst dateKey = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());\n\nconst oilRows = dataRows(oilPayload);\nconst gasRows = dataRows(gasPayload);\n\nreturn [\n  {\n    json: {\n      date: dateKey,\n      fetched_at: now.toISOString(),\n      brent_usd: pickSeries(oilRows, 'RBRTE'),\n      wti_usd: pickSeries(oilRows, 'RWTC'),\n      natgas_usd: pickSeries(gasRows, 'RNGWHHD'),\n    },\n  },\n];\n"
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000006",
+      "name": "Normalize Prices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-380, 260]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/REPLACE_WITH_GOOGLE_SHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "PriceHistory"
+        },
+        "options": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000007",
+      "name": "Read PriceHistory",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-120, 260],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Compares today's prices with the most recent earlier row of the PriceHistory tab.\nconst THRESHOLD_PCT = 3;\nconst today = $('Normalize Prices').first().json;\nconst history = $input.all().map((item) => item.json);\n\nconst pad = (n) => String(n).padStart(2, '0');\n\nconst toDateKey = (value) => {\n  if (value === undefined || value === null || value === '') return null;\n  if (typeof value === 'number') {\n    // Google Sheets serial date -> ISO date\n    const millis = Math.round((value - 25569) * 86400 * 1000);\n    return new Date(millis).toISOString().slice(0, 10);\n  }\n  const text = String(value).trim().split('/').join('-');\n  const parsed = new Date(text);\n  if (!Number.isNaN(parsed.getTime())) {\n    return parsed.getFullYear() + '-' + pad(parsed.getMonth() + 1) + '-' + pad(parsed.getDate());\n  }\n  return text.slice(0, 10);\n};\n\nconst toNumber = (value) => {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? parsed : null;\n};\n\nconst previousRows = history\n  .map((row) => ({ date: toDateKey(row.date), row }))\n  .filter((entry) => entry.date && entry.date < today.date)\n  .sort((a, b) => (a.date < b.date ? 1 : -1));\n\nconst previous = previousRows.length > 0 ? previousRows[0] : null;\nconst previousRow = previous ? previous.row : {};\n\nconst changePct = (current, before) => {\n  const base = toNumber(before);\n  if (current === null || base === null || base === 0) return null;\n  return ((current - base) / base) * 100;\n};\n\nconst brentChange = changePct(today.brent_usd, previousRow.brent_usd);\nconst wtiChange = changePct(today.wti_usd, previousRow.wti_usd);\nconst natgasChange = changePct(today.natgas_usd, previousRow.natgas_usd);\n\nconst formatPrice = (value) => (value === null ? 'n/a' : '$' + value.toFixed(2));\nconst formatChange = (value) => (value === null ? 'n/a' : (value >= 0 ? '+' : '') + value.toFixed(2) + '%');\n\nconst moves = [\n  { label: 'Brent', price: today.brent_usd, change: brentChange },\n  { label: 'WTI', price: today.wti_usd, change: wtiChange },\n  { label: 'Henry Hub gas', price: today.natgas_usd, change: natgasChange },\n];\n\nconst alerts = moves.filter((move) => move.change !== null && Math.abs(move.change) > THRESHOLD_PCT);\nconst previousLabel = previous ? previous.date : 'no earlier row';\n\nconst briefingLines = [\n  ':oil_drum: *Daily oil and gas price briefing - ' + today.date + '*',\n].concat(\n  moves.map((move) => '- ' + move.label + ': ' + formatPrice(move.price) + ' (' + formatChange(move.change) + ' vs ' + previousLabel + ')'),\n  [alerts.length === 0 ? '_No move beyond ' + THRESHOLD_PCT + '%.' : ':warning: ' + alerts.length + ' move(s) beyond ' + THRESHOLD_PCT + '%.'],\n);\n\nconst urgentLines = [\n  ':rotating_light: *Price move alert - ' + today.date + '*',\n].concat(\n  alerts.map((move) => '- *' + move.label + '*: ' + formatPrice(move.price) + ' (' + formatChange(move.change) + ')'),\n  ['Check market exposure, hedging position and the trading desk.'],\n);\n\nreturn [\n  {\n    json: {\n      date: today.date,\n      brent_usd: today.brent_usd,\n      wti_usd: today.wti_usd,\n      natgas_usd: today.natgas_usd,\n      brent_change_pct: brentChange,\n      wti_change_pct: wtiChange,\n      natgas_change_pct: natgasChange,\n      previous_date: previous ? previous.date : null,\n      alert_count: alerts.length,\n      any_price_alert: alerts.length > 0,\n      briefing: briefingLines.join('\\n'),\n      urgent_message: urgentLines.join('\\n'),\n    },\n  },\n];\n"
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000008",
+      "name": "Compute % Change",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [140, 260]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/REPLACE_WITH_GOOGLE_SHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "PriceHistory"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $json.date }}",
+            "brent_usd": "={{ $json.brent_usd }}",
+            "wti_usd": "={{ $json.wti_usd }}",
+            "natgas_usd": "={{ $json.natgas_usd }}",
+            "brent_change_pct": "={{ $json.brent_change_pct }}",
+            "wti_change_pct": "={{ $json.wti_change_pct }}",
+            "natgas_change_pct": "={{ $json.natgas_change_pct }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000009",
+      "name": "Log to PriceHistory",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [440, -60],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0123456789",
+          "mode": "list",
+          "cachedResultName": "#oil-gas-alerts"
+        },
+        "text": "={{ $json.briefing }}",
+        "otherOptions": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000010",
+      "name": "Slack Daily Briefing",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [440, 180],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CREDENTIAL_ID",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1a1a1a1-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.any_price_alert }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000011",
+      "name": "Any Move Over 3%",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [440, 420]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0123456789",
+          "mode": "list",
+          "cachedResultName": "#oil-gas-alerts"
+        },
+        "text": "={{ $json.urgent_message }}",
+        "otherOptions": {}
+      },
+      "id": "a1a1a1a1-0000-4000-8000-000000000012",
+      "name": "Slack Urgent Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [760, 340],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CREDENTIAL_ID",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "a1a1a1a1-0000-4000-8000-000000000013",
+      "name": "No Alert Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [760, 520]
+    }
+  ],
+  "connections": {
+    "Weekdays at 07:00": {
+      "main": [
+        [
+          {
+            "node": "EIA Crude Oil (Brent + WTI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EIA Crude Oil (Brent + WTI)": {
+      "main": [
+        [
+          {
+            "node": "EIA Natural Gas (Henry Hub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EIA Natural Gas (Henry Hub)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Prices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Prices": {
+      "main": [
+        [
+          {
+            "node": "Read PriceHistory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PriceHistory": {
+      "main": [
+        [
+          {
+            "node": "Compute % Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute % Change": {
+      "main": [
+        [
+          {
+            "node": "Log to PriceHistory",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Daily Briefing",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Any Move Over 3%",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Move Over 3%": {
+      "main": [
+        [
+          {
+            "node": "Slack Urgent Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Alert Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

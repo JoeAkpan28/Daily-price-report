@@ -1,0 +1,17 @@
+# Secrets
+.env
+*.env
+credentials*.json
+*.pem
+*.key
+
+# Local copies of exported workflows (may contain real IDs)
+*.local.json
+*-private.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+node_modules/
