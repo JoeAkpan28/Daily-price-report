@@ -147,6 +147,6 @@ Ideas and fixes are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Author
 
-Built by **[Your Name]**. Connect with me on [LinkedIn](https://linkedin.com/in/your-profile).
+Built by **Joe Akpan**. Connect with me on [X](https://x.com/JoeAkpan28)).
 
-*Built with n8n. Parts of the workflow were created with help from an AI coding assistant and then reviewed and tested by me.*
+*Built with n8n. Documentation of the workflow was created with help from an AI coding assistant and then reviewed by me.*
